@@ -71,6 +71,10 @@ class ReconciliationResult:
     date_range: tuple              # (min_date, max_date)
     match_rate: float              # 匹配率
 
+    # 原始数据（用于报告生成，可选）
+    bank_df: object = None         # 银行原始DataFrame
+    ledger_df: object = None       # 日记账原始DataFrame
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # compare_amounts
@@ -260,6 +264,8 @@ def run_reconciliation(bank_path, ledger_path, config_module=None):
         reconciled_at=datetime.now().isoformat(),
         date_range=date_range,
         match_rate=match_rate,
+        bank_df=bank_with_dups,
+        ledger_df=ledger_with_dups,
     )
 
 

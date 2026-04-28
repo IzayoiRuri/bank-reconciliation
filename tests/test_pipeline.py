@@ -212,6 +212,7 @@ class TestReconciliationResultDataclass:
             'matched_records', 'unmatched_bank', 'unmatched_ledger',
             'bank_duplicates', 'ledger_duplicates',
             'reconciled_at', 'date_range', 'match_rate',
+            'bank_df', 'ledger_df',
         }
         r_fields = {f.name for f in __import__('dataclasses').fields(ReconciliationResult)}
         assert fields == r_fields
