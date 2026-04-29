@@ -157,7 +157,7 @@ def _write_summary_sheet(ws, result):
     write_row('  模糊匹配', r.fuzzy_matched)
     write_row('  拆分匹配', r.split_matched)
     write_row('  总匹配数', r.matched_count)
-    write_row('  匹配率', f"{r.match_rate:.2f}%")
+    write_row('  匹配率', f"{r.match_rate:.1%}")
     row += 1
 
     # ── Differences ──

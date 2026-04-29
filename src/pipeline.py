@@ -209,9 +209,9 @@ def run_reconciliation(bank_path, ledger_path, config_module=None):
     # Match rate
     max_count = max(len(bank_df), len(ledger_df))
     if max_count > 0:
-        match_rate = round(len(all_matched) / max_count * 100, 2)
+        match_rate = round(len(all_matched) / max_count, 4)
     else:
-        match_rate = 100.0
+        match_rate = 1.0
 
     # Total bank/ledger net amounts
     total_bank_amount = round(float(bank_df['normalized_amount'].sum()), 2)
@@ -314,7 +314,7 @@ def get_summary_text(result):
     lines.append("-" * 60)
     lines.append("  匹配结果")
     lines.append("-" * 60)
-    lines.append(f"  匹配率:          {result.match_rate:.2f}%")
+    lines.append(f"  匹配率:          {result.match_rate:.1%}")
     lines.append(f"  总匹配数:        {result.matched_count}")
     lines.append(f"    - 精确匹配:    {result.exact_matched}")
     lines.append(f"    - 模糊匹配:    {result.fuzzy_matched}")

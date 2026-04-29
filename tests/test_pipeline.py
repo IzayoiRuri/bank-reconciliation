@@ -437,7 +437,7 @@ class TestGetSummaryText:
             ledger_duplicates=pd.DataFrame(),
             reconciled_at=datetime.now().isoformat(),
             date_range=('2026-04-01', '2026-04-02'),
-            match_rate=100.0,
+            match_rate=1.0,
         )
 
         text = get_summary_text(r)
