@@ -132,7 +132,7 @@ def _resolve_config(config_module=None):
 # run_reconciliation
 # ═══════════════════════════════════════════════════════════════════════
 
-def run_reconciliation(bank_path, ledger_path, config_module=None):
+def run_reconciliation(bank_path, ledger_path, config_module=None, bank_format='auto'):
     """执行完整对账流程。
 
     流程:
@@ -146,6 +146,7 @@ def run_reconciliation(bank_path, ledger_path, config_module=None):
         bank_path: 银行流水 .xlsx 文件路径
         ledger_path: 公司日记账 .xls 文件路径
         config_module: 可选的配置模块（默认使用 config.py）
+        bank_format: 'auto', 'zhaoshang', 或 'gonghang'
 
     Returns:
         ReconciliationResult
@@ -153,7 +154,7 @@ def run_reconciliation(bank_path, ledger_path, config_module=None):
     cfg = _resolve_config(config_module)
 
     # ── 1. Load & parse ──────────────────────────────────────────
-    bank_df, ledger_df = load_and_parse(bank_path, ledger_path)
+    bank_df, ledger_df = load_and_parse(bank_path, ledger_path, bank_format=bank_format)
 
     # ── 2. Clean / normalize summaries ───────────────────────────
     bank_df = clean_dataframe(bank_df, 'bank')

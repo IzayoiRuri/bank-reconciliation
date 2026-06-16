@@ -116,10 +116,10 @@ def save_uploaded_file(uploaded_file):
 
 @st.cache_data(show_spinner=False)
 def cached_reconciliation(bank_path, ledger_path, amount_tolerance,
-                          exact_days, fuzzy_days, fuzzy_threshold):
+                          exact_days, fuzzy_days, fuzzy_threshold, bank_format):
     """Run reconciliation with caching to avoid recomputation on re-render."""
     cfg = build_config(amount_tolerance, exact_days, fuzzy_days, fuzzy_threshold)
-    result = run_reconciliation(bank_path, ledger_path, config_module=cfg)
+    result = run_reconciliation(bank_path, ledger_path, config_module=cfg, bank_format=bank_format)
     return result
 
 
@@ -142,6 +142,20 @@ with st.sidebar:
         type=["xlsx", "xls"],
         key="ledger_upload",
         help="上传公司日记账文件",
+    )
+
+    st.divider()
+
+    bank_format = st.selectbox(
+        "🏦 银行格式",
+        options=["auto", "zhaoshang", "gonghang"],
+        format_func=lambda x: {
+            "auto": "自动检测",
+            "zhaoshang": "招商银行",
+            "gonghang": "工商银行（对账单）",
+        }.get(x, x),
+        key="bank_format",
+        help="选择银行流水文件的格式。'自动检测'会先尝试标准格式，失败后自动切换对账单格式。",
     )
 
     st.divider()
@@ -204,6 +218,7 @@ with st.sidebar:
                 result = cached_reconciliation(
                     bank_tmp, ledger_tmp,
                     amount_tol, exact_days, fuzzy_days, fuzzy_threshold,
+                    bank_format,
                 )
 
                 st.session_state.result = result

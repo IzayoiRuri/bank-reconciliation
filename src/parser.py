@@ -1,6 +1,7 @@
 """银行对账工具 — 文件解析器
 
 解析银行流水(.xlsx)和公司日记账(.xls)为统一格式的 DataFrame。
+支持多种银行格式：招商银行（标准 xlsx）、工商银行（对账单）。
 """
 
 import pandas as pd
@@ -9,7 +10,7 @@ import xlrd
 import re
 from datetime import datetime
 
-from config import BANK_COLUMN_ALIASES, LEDGER_COLUMN_ALIASES
+from config import BANK_COLUMN_ALIASES, LEDGER_COLUMN_ALIASES, BANK_FORMATS
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -41,7 +42,36 @@ def auto_detect_columns(df, aliases_dict):
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Bank statement parser (.xlsx)
+# Bank statement parser (.xlsx) — dispatch
+# ═══════════════════════════════════════════════════════════════════════
+
+def parse_bank_statement(filepath, bank_format='auto'):
+    """解析银行流水文件 (.xlsx)。
+
+    自动识别列名并标准化输出：
+    date, debit, credit, balance, summary, counterparty, counterparty_acct
+
+    Args:
+        filepath: .xlsx 文件路径
+        bank_format: 'auto' (自动检测), 'zhaoshang' (招商银行), 'gonghang' (工商银行对账单)
+
+    Returns:
+        pandas DataFrame
+    """
+    if bank_format == 'gonghang':
+        return _parse_bank_gonghang(filepath)
+    elif bank_format == 'zhaoshang':
+        return _parse_bank_standard(filepath, header_row=1)
+    else:
+        # auto: try standard first, fall back to gonghang
+        result = _parse_bank_standard(filepath)
+        if len(result) > 0:
+            return result
+        return _parse_bank_gonghang(filepath)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Bank parser: 招商银行 (standard xlsx, row 1 = header)
 # ═══════════════════════════════════════════════════════════════════════
 
 def _find_bank_header_row(ws):
@@ -50,7 +80,6 @@ def _find_bank_header_row(ws):
     Scans rows looking for one that contains common bank statement column names
     like '交易日', '借方金额', etc. Returns the 1-indexed row number.
     """
-    # Keywords that a bank statement header row should contain
     header_keywords = ['交易日', '交易时间', '借方金额', '贷方金额']
 
     for row_idx in range(1, ws.max_row + 1):
@@ -58,31 +87,100 @@ def _find_bank_header_row(ws):
         row_text = ' '.join(row_vals)
 
         matches = sum(1 for kw in header_keywords if kw in row_text)
-        if matches >= 3:  # At least 3 of the keywords must be present
+        if matches >= 3:
             return row_idx
 
-    return 1  # Fallback: assume first row is header
+    return 1
 
 
-def parse_bank_statement(filepath):
-    """解析银行流水文件 (.xlsx)。
-
-    自动识别列名并标准化输出：
-    date, debit, credit, balance, summary, counterparty, counterparty_acct
+def _build_standardized_df(df, col_map):
+    """Build standardized DataFrame from a raw parsed DataFrame and column map.
 
     Args:
-        filepath: .xlsx 文件路径
+        df: raw DataFrame with original column names
+        col_map: {标准列名: 实际列名} from auto_detect_columns
 
     Returns:
-        pandas DataFrame
+        standardized DataFrame (date, debit, credit, balance, summary, counterparty, counterparty_acct)
+    """
+    result = pd.DataFrame()
+
+    # Date
+    date_col = col_map.get('date')
+    if date_col and date_col in df.columns:
+        result['date'] = pd.to_datetime(df[date_col], errors='coerce')
+    else:
+        result['date'] = pd.NaT
+
+    # Debit
+    debit_col = col_map.get('debit')
+    if debit_col and debit_col in df.columns:
+        result['debit'] = pd.to_numeric(df[debit_col], errors='coerce').fillna(0)
+    else:
+        result['debit'] = 0.0
+
+    # Credit
+    credit_col = col_map.get('credit')
+    if credit_col and credit_col in df.columns:
+        result['credit'] = pd.to_numeric(df[credit_col], errors='coerce').fillna(0)
+    else:
+        result['credit'] = 0.0
+
+    # Balance
+    balance_col = col_map.get('balance')
+    if balance_col and balance_col in df.columns:
+        result['balance'] = pd.to_numeric(df[balance_col], errors='coerce').fillna(0)
+    else:
+        result['balance'] = 0.0
+
+    # Summary
+    summary_col = col_map.get('summary')
+    if summary_col and summary_col in df.columns:
+        result['summary'] = df[summary_col].fillna('').astype(str)
+    else:
+        result['summary'] = ''
+
+    # Counterparty
+    cp_col = col_map.get('counterparty')
+    if cp_col and cp_col in df.columns:
+        result['counterparty'] = df[cp_col].fillna('').astype(str)
+    else:
+        result['counterparty'] = ''
+
+    # Counterparty account
+    cp_acct_col = col_map.get('counterparty_acct')
+    if cp_acct_col and cp_acct_col in df.columns:
+        result['counterparty_acct'] = df[cp_acct_col].fillna('').astype(str)
+    else:
+        result['counterparty_acct'] = ''
+
+    # Drop rows where date is NaT (metadata/empty rows)
+    result = result.dropna(subset=['date']).reset_index(drop=True)
+
+    # Fill any remaining NaN amounts with 0
+    for col in ['debit', 'credit', 'balance']:
+        result[col] = result[col].fillna(0)
+
+    return result
+
+
+def _parse_bank_standard(filepath, header_row=None):
+    """Parse standard bank xlsx via openpyxl (招商银行 format).
+
+    Args:
+        filepath: .xlsx file path
+        header_row: force header row (1-indexed), None=auto-detect
+
+    Returns:
+        standardized DataFrame
     """
     wb = openpyxl.load_workbook(filepath, data_only=True)
     ws = wb.active
 
-    # Find the header row
-    header_row = _find_bank_header_row(ws)
+    if header_row is None:
+        header_row = _find_bank_header_row(ws)
 
-    # Read header values (all columns)
+    # Read header values
     header_vals = []
     for cell in ws[header_row]:
         val = cell.value
@@ -96,68 +194,88 @@ def parse_bank_statement(filepath):
             row_vals.append(cell.value)
         data_rows.append(row_vals)
 
-    # Build DataFrame with all columns
     df = pd.DataFrame(data_rows, columns=header_vals)
-
-    # Auto-detect column mappings
     col_map = auto_detect_columns(df, BANK_COLUMN_ALIASES)
+    return _build_standardized_df(df, col_map)
 
-    # Build standardized DataFrame
+
+# ═══════════════════════════════════════════════════════════════════════
+# Bank parser: 工商银行 (对账单 format, 36-column wide table)
+# ═══════════════════════════════════════════════════════════════════════
+
+# Gonghang (ICBC) 对账单 column index → standard field mapping
+_GONGHANG_COLUMN_MAP = {
+    3: 'date',               # 交易日
+    7: 'debit',              # 借方金额
+    8: 'credit',             # 贷方金额
+    9: 'balance',            # 余额
+    10: 'summary',           # 摘要
+    19: 'counterparty',      # 收(付)方名称
+    20: 'counterparty_acct', # 收(付)方账号
+}
+
+# Row index where the column header row lives (0-indexed)
+_GONGHANG_HEADER_ROW = 12
+
+# Row index where data starts (0-indexed, after header)
+_GONGHANG_DATA_START = 13
+
+
+def _parse_bank_gonghang(filepath):
+    """Parse ICBC 对账单 format bank statement.
+
+    The file has:
+      - Rows 0-11: metadata block (标题/接口版本/账户信息 etc.)
+      - Row 12: column headers (36 columns)
+      - Rows 13+: transaction data
+
+    Uses pandas read_excel with header=None because openpyxl's dimension
+    detection does not see all 36 columns of this format.
+
+    Args:
+        filepath: .xlsx file path
+
+    Returns:
+        standardized DataFrame (date, debit, credit, balance, summary, counterparty, counterparty_acct)
+    """
+    # Read all rows with no header — pandas sees all 36 columns correctly
+    raw = pd.read_excel(filepath, header=None, engine='openpyxl')
+
+    # Extract column headers from the designated header row
+    header_vals = []
+    for c in range(raw.shape[1]):
+        val = raw.iloc[_GONGHANG_HEADER_ROW, c]
+        header_vals.append(str(val).strip() if pd.notna(val) else f'_col{c}')
+
+    # Extract data rows (after header)
+    data = raw.iloc[_GONGHANG_DATA_START:].copy()
+    data.columns = header_vals
+    data = data.reset_index(drop=True)
+
+    # Build standardized result directly via fixed column index mapping
     result = pd.DataFrame()
 
-    # Date
-    date_col = col_map.get('date')
-    if date_col and date_col in df.columns:
-        result['date'] = pd.to_datetime(df[date_col], errors='coerce')
-    else:
-        result['date'] = pd.NaT
+    for col_idx, std_field in _GONGHANG_COLUMN_MAP.items():
+        if col_idx < raw.shape[1]:
+            series = raw.iloc[_GONGHANG_DATA_START:, col_idx].reset_index(drop=True)
 
-    # Debit (借方金额)
-    debit_col = col_map.get('debit')
-    if debit_col and debit_col in df.columns:
-        result['debit'] = pd.to_numeric(df[debit_col], errors='coerce').fillna(0)
-    else:
-        result['debit'] = 0.0
+            if std_field == 'date':
+                result['date'] = pd.to_datetime(series, errors='coerce')
+            elif std_field in ('debit', 'credit', 'balance'):
+                result[std_field] = pd.to_numeric(series, errors='coerce').fillna(0)
+            else:
+                result[std_field] = series.fillna('').astype(str)
+        else:
+            if std_field == 'date':
+                result['date'] = pd.NaT
+            elif std_field in ('debit', 'credit', 'balance'):
+                result[std_field] = 0.0
+            else:
+                result[std_field] = ''
 
-    # Credit (贷方金额)
-    credit_col = col_map.get('credit')
-    if credit_col and credit_col in df.columns:
-        result['credit'] = pd.to_numeric(df[credit_col], errors='coerce').fillna(0)
-    else:
-        result['credit'] = 0.0
-
-    # Balance (余额)
-    balance_col = col_map.get('balance')
-    if balance_col and balance_col in df.columns:
-        result['balance'] = pd.to_numeric(df[balance_col], errors='coerce').fillna(0)
-    else:
-        result['balance'] = 0.0
-
-    # Summary (摘要)
-    summary_col = col_map.get('summary')
-    if summary_col and summary_col in df.columns:
-        result['summary'] = df[summary_col].fillna('').astype(str)
-    else:
-        result['summary'] = ''
-
-    # Counterparty (收(付)方名称)
-    cp_col = col_map.get('counterparty')
-    if cp_col and cp_col in df.columns:
-        result['counterparty'] = df[cp_col].fillna('').astype(str)
-    else:
-        result['counterparty'] = ''
-
-    # Counterparty account (收(付)方账号)
-    cp_acct_col = col_map.get('counterparty_acct')
-    if cp_acct_col and cp_acct_col in df.columns:
-        result['counterparty_acct'] = df[cp_acct_col].fillna('').astype(str)
-    else:
-        result['counterparty_acct'] = ''
-
-    # Drop rows where date is NaT (metadata/empty rows)
+    # Drop rows where date is NaT (should be none, but safety)
     result = result.dropna(subset=['date']).reset_index(drop=True)
 
-    # Fill any remaining NaN amounts with 0
     for col in ['debit', 'credit', 'balance']:
         result[col] = result[col].fillna(0)
 
@@ -177,10 +295,8 @@ def _is_summary_row(row_values):
     Returns:
         bool: True if row should be filtered out
     """
-    # Convert all values to strings for pattern matching
     row_str = '|'.join([str(v) if v is not None else '' for v in row_values])
 
-    # Check for summary keywords
     summary_keywords = ['合计', '累计', '上年结转']
     for kw in summary_keywords:
         if kw in row_str:
@@ -205,27 +321,20 @@ def parse_ledger(filepath):
     wb = xlrd.open_workbook(filepath)
     ws = wb.sheet_by_index(0)
 
-    # Read headers from first row
     headers = [str(ws.cell_value(0, c)).strip() for c in range(ws.ncols)]
 
-    # Read all data rows
     data_rows = []
     for r in range(1, ws.nrows):
         row_vals = [ws.cell_value(r, c) for c in range(ws.ncols)]
 
-        # Skip summary rows
         if _is_summary_row(row_vals):
             continue
 
         data_rows.append(row_vals)
 
-    # Build DataFrame
     df = pd.DataFrame(data_rows, columns=headers)
-
-    # Auto-detect column mappings
     col_map = auto_detect_columns(df, LEDGER_COLUMN_ALIASES)
 
-    # Build standardized DataFrame
     result = pd.DataFrame()
 
     # Combine year, month, day into date
@@ -237,7 +346,6 @@ def parse_ledger(filepath):
     month_vals = pd.to_numeric(df[month_col], errors='coerce').fillna(1).astype(int) if month_col else 1
     day_vals = pd.to_numeric(df[day_col], errors='coerce').fillna(1).astype(int) if day_col else 1
 
-    # Build datetime strings
     def build_date(y, m, d):
         try:
             return pd.Timestamp(year=int(y), month=int(m), day=int(d))
@@ -246,9 +354,10 @@ def parse_ledger(filepath):
 
     dates = []
     for i in range(len(df)):
-        dates.append(build_date(year_vals.iloc[i] if hasattr(year_vals, 'iloc') else year_vals[i] if isinstance(year_vals, (list, pd.Series)) else year_vals,
-                                 month_vals.iloc[i] if hasattr(month_vals, 'iloc') else month_vals[i] if isinstance(month_vals, (list, pd.Series)) else month_vals,
-                                 day_vals.iloc[i] if hasattr(day_vals, 'iloc') else day_vals[i] if isinstance(day_vals, (list, pd.Series)) else day_vals))
+        dates.append(build_date(
+            year_vals.iloc[i] if hasattr(year_vals, 'iloc') else year_vals[i] if isinstance(year_vals, (list, pd.Series)) else year_vals,
+            month_vals.iloc[i] if hasattr(month_vals, 'iloc') else month_vals[i] if isinstance(month_vals, (list, pd.Series)) else month_vals,
+            day_vals.iloc[i] if hasattr(day_vals, 'iloc') else day_vals[i] if isinstance(day_vals, (list, pd.Series)) else day_vals))
 
     result['date'] = dates
 
@@ -301,10 +410,8 @@ def parse_ledger(filepath):
     else:
         result['balance'] = 0.0
 
-    # Drop rows where date is NaT
     result = result.dropna(subset=['date']).reset_index(drop=True)
 
-    # Fill NaN amounts
     for col in ['debit', 'credit', 'balance']:
         result[col] = result[col].fillna(0)
 
@@ -334,30 +441,21 @@ def normalize_transaction(df, source):
     """
     df = df.copy()
 
-    # Add source
     df['source'] = source
 
-    # Compute normalized amount
     if source == 'bank':
-        # 银行：贷方=收入(正), 借方=支出(负)
         df['normalized_amount'] = df['credit'] - df['debit']
     elif source == 'ledger':
-        # 日记账：借方=收入(正), 贷方=支出(负) — 与银行相反
         df['normalized_amount'] = df['debit'] - df['credit']
     else:
         raise ValueError(f"Unknown source: {source}. Must be 'bank' or 'ledger'.")
 
-    # Add month column (YYYY-MM)
     if 'date' in df.columns:
         df['month'] = df['date'].apply(
             lambda d: d.strftime('%Y-%m') if pd.notna(d) else ''
         )
     else:
         df['month'] = ''
-
-    # Clean abnormal values (extremely large amounts that might be errors)
-    # Keep this simple - just ensure amounts are within reasonable bounds
-    # Could be expanded later
 
     return df
 
@@ -366,17 +464,18 @@ def normalize_transaction(df, source):
 # Main entry point
 # ═══════════════════════════════════════════════════════════════════════
 
-def load_and_parse(bank_path, ledger_path):
+def load_and_parse(bank_path, ledger_path, bank_format='auto'):
     """加载并解析银行流水和公司日记账。
 
     Args:
         bank_path: 银行流水 .xlsx 文件路径
         ledger_path: 公司日记账 .xls 文件路径
+        bank_format: 'auto', 'zhaoshang', 或 'gonghang'
 
     Returns:
         (bank_df, ledger_df): 标准化后的两个 DataFrame
     """
-    bank_df = parse_bank_statement(bank_path)
+    bank_df = parse_bank_statement(bank_path, bank_format=bank_format)
     ledger_df = parse_ledger(ledger_path)
 
     bank_df = normalize_transaction(bank_df, 'bank')
