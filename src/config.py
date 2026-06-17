@@ -11,7 +11,7 @@ BANK_FORMATS = {
         "file_type": "csv",  # read via openpyxl data_only
     },
     "gonghang": {
-        "label": "工商银行（对账单）",
+        "label": "工商银行",
         "description": "对账单格式：顶部12行元数据，第13行列头，第14行起数据。36列宽表。",
         "file_type": "duizhangdan",
     },

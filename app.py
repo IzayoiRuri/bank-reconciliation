@@ -152,7 +152,7 @@ with st.sidebar:
         format_func=lambda x: {
             "auto": "自动检测",
             "zhaoshang": "招商银行",
-            "gonghang": "工商银行（对账单）",
+            "gonghang": "工商银行",
         }.get(x, x),
         key="bank_format",
         help="选择银行流水文件的格式。'自动检测'会先尝试标准格式，失败后自动切换对账单格式。",

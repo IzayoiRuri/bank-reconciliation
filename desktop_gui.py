@@ -213,7 +213,7 @@ class BankReconciliationApp(ctk.CTk):
         label_map = {
             "auto": "自动检测",
             "zhaoshang": "招商银行",
-            "gonghang": "工商银行（对账单）",
+            "gonghang": "工商银行",
         }
         self.format_menu.configure(text=label_map.get(choice, choice))
 
