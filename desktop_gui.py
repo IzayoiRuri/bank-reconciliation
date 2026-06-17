@@ -210,12 +210,7 @@ class BankReconciliationApp(ctk.CTk):
     # ── Format dropdown handler ─────────────────────────────────────
 
     def _on_format_change(self, choice):
-        label_map = {
-            "auto": "自动检测",
-            "zhaoshang": "招商银行",
-            "gonghang": "工商银行",
-        }
-        self.format_menu.configure(text=label_map.get(choice, choice))
+        pass  # OptionMenu updates display automatically, nothing to do
 
     # ── File choosers ───────────────────────────────────────────────
 
