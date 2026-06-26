@@ -11,6 +11,7 @@ import tempfile
 from datetime import datetime
 from tkinter import filedialog, messagebox
 import tkinter as tk
+from tkinter import ttk
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
@@ -32,6 +33,10 @@ ctk.set_default_color_theme("blue")
 APP_TITLE = "银行对账工具"
 WINDOW_WIDTH = 1100
 WINDOW_HEIGHT = 750
+
+# Bank format mapping: display label → internal key
+FORMAT_LABELS = ["自动检测", "招商银行", "工商银行"]
+FORMAT_KEY_MAP = {"自动检测": "auto", "招商银行": "zhaoshang", "工商银行": "gonghang"}
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -91,18 +96,16 @@ class BankReconciliationApp(ctk.CTk):
         ctk.CTkButton(self.sidebar, text="📒 选择日记账",
                       command=self._choose_ledger).pack(pady=(0, 10), padx=15)
 
-        # Bank format
+        # Bank format — use Chinese labels
         ctk.CTkLabel(self.sidebar, text="🏦 银行格式",
                      font=ctk.CTkFont(size=13)).pack(pady=(10, 2))
-        self.format_var = ctk.StringVar(value="auto")
+        self.format_var = ctk.StringVar(value="自动检测")
         self.format_menu = ctk.CTkOptionMenu(
             self.sidebar,
-            values=["auto", "zhaoshang", "gonghang"],
+            values=FORMAT_LABELS,
             variable=self.format_var,
-            command=self._on_format_change,
         )
         self.format_menu.pack(pady=(0, 10), padx=15)
-        self._on_format_change("auto")
 
         # Parameters
         ctk.CTkLabel(self.sidebar, text="⚙️ 匹配参数",
@@ -113,10 +116,10 @@ class BankReconciliationApp(ctk.CTk):
         self.amount_var = ctk.DoubleVar(value=0.01)
         ctk.CTkEntry(self.sidebar, textvariable=self.amount_var, width=120).pack(pady=(2, 8))
 
-        # Date tolerance
+        # Date tolerance (max extended to 20 days)
         ctk.CTkLabel(self.sidebar, text="精确匹配日期容差（天）").pack()
         self.exact_days_var = ctk.IntVar(value=3)
-        ctk.CTkSlider(self.sidebar, from_=1, to=10, number_of_steps=9,
+        ctk.CTkSlider(self.sidebar, from_=1, to=20, number_of_steps=19,
                       variable=self.exact_days_var).pack(pady=(2, 2), padx=15)
         self.exact_days_label = ctk.CTkLabel(self.sidebar, text="3 天")
         self.exact_days_label.pack(pady=(0, 8))
@@ -167,50 +170,52 @@ class BankReconciliationApp(ctk.CTk):
         self.tabview = ctk.CTkTabview(self.main)
         self.tabview.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
         self.tabview.add("📊 对账结果")
+        self.tabview.add("📋 匹配明细")
         self.tabview.add("⚠️ 差异交易")
         self.tabview.add("🔄 疑似重复")
         self.tabview.add("📥 导出")
 
+        # ── Use monospace font + no wrap for all text tabs (perfect alignment) ──
+        mono_font = ctk.CTkFont(family="Consolas", size=13)
+        mono_font_small = ctk.CTkFont(family="Consolas", size=12)
+
         # Tab: 对账结果
         self.summary_text = ctk.CTkTextbox(self.tabview.tab("📊 对账结果"),
-                                            font=ctk.CTkFont(size=14),
-                                            wrap="word")
+                                            font=mono_font, wrap="none")
         self.summary_text.pack(fill="both", expand=True, padx=5, pady=5)
-        self.summary_text.insert("1.0", "👈 请在左侧选择银行流水和日记账文件，然后点击「开始对账」。\n\n"
-                                 "支持格式：\n"
-                                 "  • 招商银行 — 标准 xlsx 流水\n"
-                                 "  • 工商银行 — 对账单格式（.xlsx）")
+        self.summary_text.insert("1.0", 
+            "👈 请在左侧选择银行流水和日记账文件，然后点击「开始对账」。\n\n"
+            "支持格式：\n"
+            "  • 招商银行 — 标准 xlsx 流水\n"
+            "  • 工商银行 — 对账单格式（.xlsx）")
+
+        # Tab: 匹配明细 (new dedicated tab with Treeview for perfect columns)
+        self.matched_frame = ctk.CTkFrame(self.tabview.tab("📋 匹配明细"))
+        self.matched_frame.pack(fill="both", expand=True, padx=5, pady=5)
 
         # Tab: 差异交易
         self.diff_text = ctk.CTkTextbox(self.tabview.tab("⚠️ 差异交易"),
-                                         font=ctk.CTkFont(size=13),
-                                         wrap="word")
+                                         font=mono_font_small, wrap="none")
         self.diff_text.pack(fill="both", expand=True, padx=5, pady=5)
 
         # Tab: 疑似重复
         self.dup_text = ctk.CTkTextbox(self.tabview.tab("🔄 疑似重复"),
-                                        font=ctk.CTkFont(size=13),
-                                        wrap="word")
+                                        font=mono_font_small, wrap="none")
         self.dup_text.pack(fill="both", expand=True, padx=5, pady=5)
 
         # Tab: 导出
         self.export_text = ctk.CTkTextbox(self.tabview.tab("📥 导出"),
-                                           font=ctk.CTkFont(size=14),
-                                           wrap="word")
+                                           font=ctk.CTkFont(size=14), wrap="word")
         self.export_text.pack(fill="both", expand=True, padx=5, pady=5)
-        self.export_text.insert("1.0", "对账完成后可导出 Excel 报告。\n\n"
-                                "报告包含 5 个工作表：\n"
-                                "  1. 对账汇总\n"
-                                "  2. 匹配明细\n"
-                                "  3. 银行独有\n"
-                                "  4. 日记账独有\n"
-                                "  5. 疑似重复\n\n"
-                                "点击左侧「📥 导出 Excel 报告」按钮即可。")
-
-    # ── Format dropdown handler ─────────────────────────────────────
-
-    def _on_format_change(self, choice):
-        pass  # OptionMenu updates display automatically, nothing to do
+        self.export_text.insert("1.0",
+            "对账完成后可导出 Excel 报告。\n\n"
+            "报告包含 5 个工作表：\n"
+            "  1. 对账汇总\n"
+            "  2. 匹配明细\n"
+            "  3. 银行独有\n"
+            "  4. 日记账独有\n"
+            "  5. 疑似重复\n\n"
+            "点击左侧「📥 导出 Excel 报告」按钮即可。")
 
     # ── File choosers ───────────────────────────────────────────────
 
@@ -266,7 +271,8 @@ class BankReconciliationApp(ctk.CTk):
                 DUPLICATE_CHECK_DAYS=3,
             )
 
-            bank_fmt = self.format_var.get()
+            # Map Chinese label → internal format key
+            bank_fmt = FORMAT_KEY_MAP.get(self.format_var.get(), "auto")
             result = run_reconciliation(
                 self.bank_path, self.ledger_path,
                 config_module=cfg,
@@ -292,6 +298,56 @@ class BankReconciliationApp(ctk.CTk):
         result = self.result
 
         # ── Summary tab ──────────────────────────────
+        self._fill_summary(result)
+
+        # ── Matched detail tab (Treeview, all records) ──
+        self._fill_matched(result)
+
+        # ── Diff tab ─────────────────────────────────
+        self._fill_diffs(result)
+
+        # ── Duplicate tab ────────────────────────────
+        self._fill_duplicates(result)
+
+        # ── Export tab ───────────────────────────────
+        exp = self.export_text
+        exp.delete("1.0", "end")
+        dr = result.date_range
+        exp.insert("1.0",
+            f"对账已完成！点击左侧「📥 导出 Excel 报告」按钮保存。\n\n"
+            f"匹配率: {result.match_rate:.2f}%\n"
+            f"日期范围: {dr[0]} ~ {dr[1]}\n" if dr and dr[0] else "日期范围: 无\n"
+            f"\n报告将包含 5 个工作表：\n"
+            f"  1. 对账汇总 — 总数、总额、匹配率\n"
+            f"  2. 匹配明细 — 每笔交易如何匹配\n"
+            f"  3. 银行独有 — 银行有但日记账无的交易\n"
+            f"  4. 日记账独有 — 日记账有但银行无的交易\n"
+            f"  5. 疑似重复 — 同源同日同金额的重复交易")
+
+        # ── Save to history ──────────────────────────
+        try:
+            save_reconciliation(
+                result, report_path="",
+                notes=f"银行:{os.path.basename(self.bank_path)} 日记账:{os.path.basename(self.ledger_path)}",
+            )
+            self._refresh_history()
+        except Exception:
+            pass
+
+        messagebox.showinfo("完成", f"✅ 对账完成！\n匹配率: {result.match_rate:.2f}%")
+
+    def _on_reconciliation_error(self, err):
+        self.is_running = False
+        self.progress.stop()
+        self.progress.pack_forget()
+        self.status_label.pack_forget()
+        self.run_btn.configure(state="normal", text="🚀 开始对账")
+        messagebox.showerror("对账失败", err)
+
+    # ── Tab fillers ─────────────────────────────────────────────────
+
+    def _fill_summary(self, result):
+        """Fill the summary tab with key-value text."""
         summary = self.summary_text
         summary.delete("1.0", "end")
 
@@ -319,71 +375,107 @@ class BankReconciliationApp(ctk.CTk):
         lines.append("-" * 60)
         bank_net = result.bank_total_income - result.bank_total_expense
         ledger_net = result.ledger_total_income - result.ledger_total_expense
-        lines.append(f"  {'项目':<12} {'银行（元）':>18} {'日记账（元）':>18} {'差额（元）':>18}")
-        lines.append(f"  {'收入':<12} {result.bank_total_income:>18,.2f} {result.ledger_total_income:>18,.2f} {result.bank_total_income - result.ledger_total_income:>18,.2f}")
-        lines.append(f"  {'支出':<12} {result.bank_total_expense:>18,.2f} {result.ledger_total_expense:>18,.2f} {result.bank_total_expense - result.ledger_total_expense:>18,.2f}")
-        lines.append(f"  {'净额':<12} {bank_net:>18,.2f} {ledger_net:>18,.2f} {bank_net - ledger_net:>18,.2f}")
+        # Fixed-width format for monospace font
+        lines.append(f"  {'项目':<8} {'银行（元）':>20} {'日记账（元）':>20} {'差额（元）':>20}")
+        lines.append(f"  {'收入':<8} {result.bank_total_income:>20,.2f} {result.ledger_total_income:>20,.2f} {result.bank_total_income - result.ledger_total_income:>20,.2f}")
+        lines.append(f"  {'支出':<8} {result.bank_total_expense:>20,.2f} {result.ledger_total_expense:>20,.2f} {result.bank_total_expense - result.ledger_total_expense:>20,.2f}")
+        lines.append(f"  {'净额':<8} {bank_net:>20,.2f} {ledger_net:>20,.2f} {bank_net - ledger_net:>20,.2f}")
 
         if result.bank_opening_balance or result.bank_closing_balance:
             lines.append("")
             lines.append(f"  银行期初余额: {result.bank_opening_balance:,.2f} 元")
             lines.append(f"  银行期末余额: {result.bank_closing_balance:,.2f} 元")
 
-        # Matched details (first 50)
-        if result.matched_records:
-            lines.append("")
-            lines.append("-" * 60)
-            lines.append("  匹配明细（精确/模糊/拆分，显示前 50 条）")
-            lines.append("-" * 60)
-            for i, rec in enumerate(result.matched_records[:50]):
-                mt = {"exact": "精确", "fuzzy": "模糊", "split": "拆分"}.get(rec.match_type, rec.match_type)
-                lines.append(f"  #{i+1:>3} [{mt}] 银行 {rec.bank_amount:>12,.2f} ⇔ 日记账 {rec.ledger_amount:>12,.2f}  |  日期差 {rec.date_diff}天" +
-                           (f"  相似度 {rec.score:.0f}" if rec.score else ""))
-
         summary.insert("1.0", "\n".join(lines))
 
-        # ── Diff tab ─────────────────────────────────
-        self._fill_diffs(result)
+    def _fill_matched(self, result):
+        """Fill the matched detail tab with a Treeview table showing ALL records."""
+        # Clear existing widgets
+        for w in self.matched_frame.winfo_children():
+            w.destroy()
 
-        # ── Duplicate tab ────────────────────────────
-        self._fill_duplicates(result)
+        if not result.matched_records:
+            ctk.CTkLabel(self.matched_frame, text="无匹配记录").pack(pady=20)
+            return
 
-        # ── Export tab ───────────────────────────────
-        exp = self.export_text
-        exp.delete("1.0", "end")
-        exp_lines = []
-        exp_lines.append("对账已完成！点击左侧「📥 导出 Excel 报告」按钮保存。")
-        exp_lines.append("")
-        exp_lines.append(f"匹配率: {result.match_rate:.2f}%")
-        exp_lines.append(f"日期范围: {dr[0]} ~ {dr[1]}" if dr and dr[0] else "日期范围: 无")
-        exp_lines.append("")
-        exp_lines.append("报告将包含 5 个工作表：")
-        exp_lines.append("  1. 对账汇总 — 总数、总额、匹配率")
-        exp_lines.append("  2. 匹配明细 — 每笔交易如何匹配")
-        exp_lines.append("  3. 银行独有 — 银行有但日记账无的交易")
-        exp_lines.append("  4. 日记账独有 — 日记账有但银行无的交易")
-        exp_lines.append("  5. 疑似重复 — 同源同日同金额的重复交易")
-        exp.insert("1.0", "\n".join(exp_lines))
+        # Summary header
+        count = len(result.matched_records)
+        ctk.CTkLabel(self.matched_frame,
+                     text=f"📋 匹配明细 — 共 {count} 条",
+                     font=ctk.CTkFont(size=14, weight="bold")).pack(pady=(5, 5))
 
-        # ── Save to history ──────────────────────────
-        try:
-            save_reconciliation(
-                result, report_path="",
-                notes=f"银行:{os.path.basename(self.bank_path)} 日记账:{os.path.basename(self.ledger_path)}",
-            )
-            self._refresh_history()
-        except Exception:
-            pass
+        # Create Treeview
+        columns = ("#", "类型", "银行日期", "银行摘要", "银行金额",
+                    "日记账日期", "日记账摘要", "日记账金额", "金额差", "日期差", "相似度")
+        tree = ttk.Treeview(self.matched_frame, columns=columns, show="headings", height=20)
 
-        messagebox.showinfo("完成", f"✅ 对账完成！\n匹配率: {result.match_rate:.2f}%")
+        # Column widths & headings
+        widths = [40, 55, 85, 180, 100, 85, 180, 100, 80, 55, 55]
+        for col, w in zip(columns, widths):
+            tree.heading(col, text=col)
+            tree.column(col, width=w, anchor="center" if col in ("#", "类型", "日期差", "相似度") else "e" if "金额" in col else "w")
 
-    def _on_reconciliation_error(self, err):
-        self.is_running = False
-        self.progress.stop()
-        self.progress.pack_forget()
-        self.status_label.pack_forget()
-        self.run_btn.configure(state="normal", text="🚀 开始对账")
-        messagebox.showerror("对账失败", err)
+        # Scrollbar
+        scrollbar = ttk.Scrollbar(self.matched_frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        tree.pack(fill="both", expand=True)
+
+        # Populate all records
+        for i, rec in enumerate(result.matched_records):
+            mt = {"exact": "精确", "fuzzy": "模糊", "split": "拆分"}.get(rec.match_type, rec.match_type)
+
+            # Try to get bank/ledger summary from the DataFrames
+            b_summary = ""
+            l_summary = ""
+            b_date = ""
+            l_date = ""
+            bank_df = result.bank_df
+            ledger_df = result.ledger_df
+
+            if bank_df is not None and len(bank_df) > 0 and rec.bank_idx < len(bank_df):
+                br = bank_df.iloc[rec.bank_idx]
+                b_date = br.get('date', '')
+                if hasattr(b_date, 'strftime') and pd.notna(b_date):
+                    b_date = b_date.strftime('%Y-%m-%d')
+                else:
+                    b_date = str(b_date)
+                b_summary = str(br.get('summary', ''))[:40]
+
+            if isinstance(rec.ledger_idx, list):
+                if ledger_df is not None and len(ledger_df) > 0:
+                    li0 = rec.ledger_idx[0] if rec.ledger_idx else 0
+                    if li0 < len(ledger_df):
+                        lr = ledger_df.iloc[li0]
+                        l_date = lr.get('date', '')
+                        if hasattr(l_date, 'strftime') and pd.notna(l_date):
+                            l_date = l_date.strftime('%Y-%m-%d')
+                        else:
+                            l_date = str(l_date)
+                        l_summary = f"{lr.get('summary', '')} (+{len(rec.ledger_idx)-1}笔)"[:40]
+            else:
+                if ledger_df is not None and len(ledger_df) > 0 and rec.ledger_idx < len(ledger_df):
+                    lr = ledger_df.iloc[rec.ledger_idx]
+                    l_date = lr.get('date', '')
+                    if hasattr(l_date, 'strftime') and pd.notna(l_date):
+                        l_date = l_date.strftime('%Y-%m-%d')
+                    else:
+                        l_date = str(l_date)
+                    l_summary = str(lr.get('summary', ''))[:40]
+
+            tree.insert("", "end", values=(
+                i + 1,
+                mt,
+                b_date,
+                b_summary,
+                f"{rec.bank_amount:,.2f}",
+                l_date,
+                l_summary,
+                f"{rec.ledger_amount:,.2f}",
+                f"{rec.amount_diff:,.2f}",
+                rec.date_diff,
+                f"{rec.score:.0f}" if rec.score else "",
+            ))
 
     def _fill_diffs(self, result):
         diff = self.diff_text
@@ -393,16 +485,20 @@ class BankReconciliationApp(ctk.CTk):
         # Bank only
         bank_unmatched = result.unmatched_bank
         if bank_unmatched is not None and len(bank_unmatched) > 0:
-            lines.append("=" * 60)
+            lines.append("=" * 70)
             lines.append(f"  🏦 银行独有交易 — {len(bank_unmatched)} 笔")
-            lines.append("=" * 60)
+            lines.append("=" * 70)
             bank_amt = float(bank_unmatched['normalized_amount'].sum())
             lines.append(f"  总金额: {bank_amt:,.2f} 元")
             lines.append("")
+            lines.append(f"  {'日期':<12} {'金额':>16}  {'摘要':<40}")
+            lines.append(f"  {'-'*12} {'-'*16}  {'-'*40}")
             for _, row in bank_unmatched.iterrows():
                 d = row.get('date')
                 date_str = d.strftime('%Y-%m-%d') if hasattr(d, 'strftime') and pd.notna(d) else ''
-                lines.append(f"  {date_str} | {row.get('normalized_amount', 0):>12,.2f} | {row.get('summary', '')[:50]}")
+                amt = float(row.get('normalized_amount', 0))
+                summary = str(row.get('summary', ''))[:40]
+                lines.append(f"  {date_str:<12} {amt:>16,.2f}  {summary:<40}")
         else:
             lines.append("✅ 所有银行交易均已匹配，无独有交易。")
 
@@ -412,16 +508,20 @@ class BankReconciliationApp(ctk.CTk):
         # Ledger only
         ledger_unmatched = result.unmatched_ledger
         if ledger_unmatched is not None and len(ledger_unmatched) > 0:
-            lines.append("=" * 60)
+            lines.append("=" * 70)
             lines.append(f"  📒 日记账独有交易 — {len(ledger_unmatched)} 笔")
-            lines.append("=" * 60)
+            lines.append("=" * 70)
             ledger_amt = float(ledger_unmatched['normalized_amount'].sum())
             lines.append(f"  总金额: {ledger_amt:,.2f} 元")
             lines.append("")
+            lines.append(f"  {'日期':<12} {'金额':>16}  {'摘要':<40}")
+            lines.append(f"  {'-'*12} {'-'*16}  {'-'*40}")
             for _, row in ledger_unmatched.iterrows():
                 d = row.get('date')
                 date_str = d.strftime('%Y-%m-%d') if hasattr(d, 'strftime') and pd.notna(d) else ''
-                lines.append(f"  {date_str} | {row.get('normalized_amount', 0):>12,.2f} | {row.get('summary', '')[:50]}")
+                amt = float(row.get('normalized_amount', 0))
+                summary = str(row.get('summary', ''))[:40]
+                lines.append(f"  {date_str:<12} {amt:>16,.2f}  {summary:<40}")
         else:
             lines.append("✅ 所有日记账交易均已匹配，无独有交易。")
 
@@ -434,13 +534,16 @@ class BankReconciliationApp(ctk.CTk):
 
         bank_dups = result.bank_duplicates
         if bank_dups is not None and len(bank_dups) > 0:
-            lines.append("=" * 60)
+            lines.append("=" * 70)
             lines.append(f"  🏦 银行内部重复 — {len(bank_dups)} 笔")
-            lines.append("=" * 60)
+            lines.append("=" * 70)
+            lines.append(f"  {'日期':<12} {'金额':>16}  {'摘要':<40}")
+            lines.append(f"  {'-'*12} {'-'*16}  {'-'*40}")
             for _, row in bank_dups.iterrows():
                 d = row.get('date')
                 date_str = d.strftime('%Y-%m-%d') if hasattr(d, 'strftime') and pd.notna(d) else ''
-                lines.append(f"  {date_str} | {row.get('normalized_amount', 0):>12,.2f} | {row.get('summary', '')[:50]}")
+                amt = float(row.get('normalized_amount', 0))
+                lines.append(f"  {date_str:<12} {amt:>16,.2f}  {str(row.get('summary', ''))[:40]}")
         else:
             lines.append("🏦 银行: 未发现重复交易。")
 
@@ -448,13 +551,16 @@ class BankReconciliationApp(ctk.CTk):
 
         ledger_dups = result.ledger_duplicates
         if ledger_dups is not None and len(ledger_dups) > 0:
-            lines.append("=" * 60)
+            lines.append("=" * 70)
             lines.append(f"  📒 日记账内部重复 — {len(ledger_dups)} 笔")
-            lines.append("=" * 60)
+            lines.append("=" * 70)
+            lines.append(f"  {'日期':<12} {'金额':>16}  {'摘要':<40}")
+            lines.append(f"  {'-'*12} {'-'*16}  {'-'*40}")
             for _, row in ledger_dups.iterrows():
                 d = row.get('date')
                 date_str = d.strftime('%Y-%m-%d') if hasattr(d, 'strftime') and pd.notna(d) else ''
-                lines.append(f"  {date_str} | {row.get('normalized_amount', 0):>12,.2f} | {row.get('summary', '')[:50]}")
+                amt = float(row.get('normalized_amount', 0))
+                lines.append(f"  {date_str:<12} {amt:>16,.2f}  {str(row.get('summary', ''))[:40]}")
         else:
             lines.append("📒 日记账: 未发现重复交易。")
 
@@ -503,8 +609,10 @@ class BankReconciliationApp(ctk.CTk):
         for rec in history:
             rid = rec['id']
             mr = rec.get('match_rate', 0) or 0
-            dr = rec.get('date_range_start', '') or ''
-            label = f"#{rid}  {mr:.1f}%  {dr}"
+            # Use reconciled_at for the display date (not date_range_start)
+            rec_time = (rec.get('reconciled_at', '') or '')
+            rec_date = rec_time[:10] if rec_time else ''
+            label = f"#{rid}  {mr:.1f}%  {rec_date}"
 
             frame = ctk.CTkFrame(self.history_frame)
             frame.pack(fill="x", pady=2, padx=2)
