@@ -60,14 +60,19 @@ def parse_bank_statement(filepath, bank_format='auto'):
     """
     if bank_format == 'gonghang':
         return _parse_bank_gonghang(filepath)
+    elif bank_format == 'jianshe':
+        return _parse_bank_historydetail(filepath)
     elif bank_format == 'zhaoshang':
         return _parse_bank_standard(filepath, header_row=1)
     else:
-        # auto: try standard first, fall back to gonghang
+        # auto: try standard → gonghang → historydetail
         result = _parse_bank_standard(filepath)
         if len(result) > 0:
             return result
-        return _parse_bank_gonghang(filepath)
+        result = _parse_bank_gonghang(filepath)
+        if len(result) > 0:
+            return result
+        return _parse_bank_historydetail(filepath)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -276,6 +281,97 @@ def _parse_bank_gonghang(filepath):
     # Drop rows where date is NaT (should be none, but safety)
     result = result.dropna(subset=['date']).reset_index(drop=True)
 
+    for col in ['debit', 'credit', 'balance']:
+        result[col] = result[col].fillna(0)
+
+    return result
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Bank parser: 建设银行 (HISTORYDETAIL format, 借贷标志 + 发生额)
+# ═══════════════════════════════════════════════════════════════════════
+
+def _parse_bank_historydetail(filepath):
+    """Parse HISTORYDETAIL format bank statement (工商银行/建设银行 etc).
+
+    Format:
+      - Row 0: [HISTORYDETAIL] tag
+      - Row 1: column headers (凭证号/对方账号/交易时间/借贷标志/对方单位/...)
+      - Rows 2+: transaction data
+      - Amount: single `发生额` column + `借贷标志` (借/贷) to determine direction
+        - 借 (debit) → 支出, 贷 (credit) → 收入
+
+    Uses pandas read_excel with header=None for reliable column access.
+
+    Args:
+        filepath: .xlsx file path
+
+    Returns:
+        standardized DataFrame (date, debit, credit, balance, summary, counterparty, counterparty_acct)
+    """
+    raw = pd.read_excel(filepath, header=None, engine='openpyxl')
+
+    # Column index mapping (0-indexed)
+    #  0: 凭证号      1: 对方账号      2: 交易时间
+    #  3: 借贷标志    4: 对方单位      5: 对方行号
+    #  6: 用途        7: 摘要          8: 附言
+    #  9: 回单个性化信息  10: 发生额    11: 入账日期
+    # 12: 余额       13: 入账时间      14: 本方账号
+    # 15: 转出金额   16: 转入金额      17: 币种
+
+    # Data starts at row 2 (0-indexed), skip [HISTORYDETAIL] + header
+    data = raw.iloc[2:].copy()
+    data = data.reset_index(drop=True)
+
+    # Parse amount from 发生额 (col 10) — may have commas
+    amount_col = data.iloc[:, 10] if raw.shape[1] > 10 else pd.Series([pd.NA] * len(data))
+    amount_str = amount_col.fillna('0').astype(str).str.replace(',', '').str.strip()
+    amounts = pd.to_numeric(amount_str, errors='coerce').fillna(0)
+
+    # Direction from 借贷标志 (col 3)
+    direction_col = data.iloc[:, 3] if raw.shape[1] > 3 else pd.Series([''] * len(data))
+    direction = direction_col.fillna('').astype(str).str.strip()
+
+    # Build standardized result
+    result = pd.DataFrame()
+
+    # Date: prefer 入账日期 (col 11, "YYYY-MM-DD"), fall back to 交易时间 (col 2)
+    date_col = data.iloc[:, 11] if raw.shape[1] > 11 else pd.Series([pd.NaT] * len(data))
+    date_fallback = data.iloc[:, 2] if raw.shape[1] > 2 else pd.Series([pd.NaT] * len(data))
+    date_vals = date_col.fillna(date_fallback).astype(str).str[:10]
+    result['date'] = pd.to_datetime(date_vals, errors='coerce')
+
+    # Debit: 发生额 where 借贷标志='借', else 0
+    is_debit = direction == '借'
+    result['debit'] = amounts.where(is_debit, 0)
+
+    # Credit: 发生额 where 借贷标志='贷', else 0
+    is_credit = direction == '贷'
+    result['credit'] = amounts.where(is_credit, 0)
+
+    # Balance (col 12)
+    balance_col = data.iloc[:, 12] if raw.shape[1] > 12 else pd.Series([0] * len(data))
+    balance_str = balance_col.fillna('0').astype(str).str.replace(',', '').str.strip()
+    result['balance'] = pd.to_numeric(balance_str, errors='coerce').fillna(0)
+
+    # Summary: 用途 (col 6), fall back to 摘要 (col 7)
+    usage_col = data.iloc[:, 6] if raw.shape[1] > 6 else pd.Series([''] * len(data))
+    summary_col = data.iloc[:, 7] if raw.shape[1] > 7 else pd.Series([''] * len(data))
+    result['summary'] = usage_col.fillna('').astype(str)
+    # If 用途 is empty, use 摘要
+    empty_mask = result['summary'].str.strip() == ''
+    result.loc[empty_mask, 'summary'] = summary_col.fillna('').astype(str)[empty_mask]
+
+    # Counterparty: 对方单位 (col 4)
+    cp_col = data.iloc[:, 4] if raw.shape[1] > 4 else pd.Series([''] * len(data))
+    result['counterparty'] = cp_col.fillna('').astype(str)
+
+    # Counterparty account: 对方账号 (col 1)
+    cp_acct_col = data.iloc[:, 1] if raw.shape[1] > 1 else pd.Series([''] * len(data))
+    result['counterparty_acct'] = cp_acct_col.fillna('').astype(str)
+
+    # Cleanup
+    result = result.dropna(subset=['date']).reset_index(drop=True)
     for col in ['debit', 'credit', 'balance']:
         result[col] = result[col].fillna(0)
 

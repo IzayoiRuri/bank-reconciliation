@@ -35,8 +35,8 @@ WINDOW_WIDTH = 1100
 WINDOW_HEIGHT = 750
 
 # Bank format mapping: display label → internal key
-FORMAT_LABELS = ["自动检测", "招商银行", "工商银行"]
-FORMAT_KEY_MAP = {"自动检测": "auto", "招商银行": "zhaoshang", "工商银行": "gonghang"}
+FORMAT_LABELS = ["自动检测", "招商银行", "工商银行", "建设银行"]
+FORMAT_KEY_MAP = {"自动检测": "auto", "招商银行": "zhaoshang", "工商银行": "gonghang", "建设银行": "jianshe"}
 
 
 # ═══════════════════════════════════════════════════════════════════════

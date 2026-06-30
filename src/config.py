@@ -15,6 +15,11 @@ BANK_FORMATS = {
         "description": "对账单格式：顶部12行元数据，第13行列头，第14行起数据。36列宽表。",
         "file_type": "duizhangdan",
     },
+    "jianshe": {
+        "label": "建设银行 / HISTORYDETAIL",
+        "description": "HISTORYDETAIL 格式（工商/建设等）：行首[HISTORYDETAIL]标记，发生额+借贷标志，21列。",
+        "file_type": "historydetail",
+    },
 }
 
 # 文件解析配置
