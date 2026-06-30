@@ -59,7 +59,11 @@ def parse_bank_statement(filepath, bank_format='auto'):
         pandas DataFrame
     """
     if bank_format == 'gonghang':
-        return _parse_bank_gonghang(filepath)
+        # 工商银行有两种格式：对账单 and HISTORYDETAIL
+        result = _parse_bank_gonghang(filepath)
+        if len(result) > 0:
+            return result
+        return _parse_bank_historydetail(filepath)
     elif bank_format == 'jianshe':
         return _parse_bank_historydetail(filepath)
     elif bank_format == 'zhaoshang':
